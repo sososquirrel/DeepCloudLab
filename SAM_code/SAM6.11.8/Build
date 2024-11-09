@@ -1,0 +1,126 @@
+#! /bin/csh -f
+
+# specify the scratch directory where object files as well as
+# restart and large output data file will be located :
+
+
+setenv SAM_SCR /burg/glab_new/users/sga2133/SAM_simulation_storage/`cat OutputDirName`
+#setenv SAM_SCR /burg/home/sga2133/SAM_simulation/SAM6.11.8/`cat OutputDirName`
+#setenv SAM_SCR `pwd`#
+
+
+# ----------------------------------
+# specify scalar-advection directory in SRC
+#setenv ADV_DIR ADV_UM5
+setenv ADV_DIR ADV_MPDATA
+
+# specify SGS directory in SRC
+setenv SGS_DIR SGS_TKE                 
+
+# specify radiation directory in SRC
+setenv RAD_DIR RAD_CAM                  # Old radiation from CAM3 climate model
+#setenv RAD_DIR RAD_RRTM                # RRTM similar to CESM climate model
+setenv MICRO_DIR MICRO_SAM1MOM
+# specify microphysics directory in SRC
+setenv MICRO_DIR MICRO_SAM1MOM
+#setenv MICRO_DIR MICRO_M2005           # Morrison et al (2005) double-moment microphysics
+#setenv MICRO_DIR MICRO_THOM            # Thoompson microphysics, modified in 2019
+#setenv MICRO_DIR MICRO_P3              # P3 microphysics
+#setenv MICRO_DIR MICRO_DRIZZLE         # Warm-microphysics based on KK2001 scheme
+#setenv MICRO_DIR MICRO_SAM1MOM          # standard SAM single-moment microphysics
+
+# ----------------------------------
+# specify (GNU) make utility
+
+setenv GNUMAKE 'make -j8'
+
+#--------------------------------------------
+#--------------------------------------------
+#--------------------------------------------
+#--------------------------------------------
+# You don't need to edit below this line.
+
+
+setenv SAM_DIR  `pwd`
+setenv SAM_OBJ  $SAM_SCR/OBJ
+setenv SAM_SRC  $SAM_DIR/SRC
+setenv SAM_WRK  $SAM_SCR/WORK
+
+if !(-d $SAM_SCR) mkdir -p $SAM_SCR
+
+set echo
+set casename=`cat $SAM_DIR/CaseName`
+
+if !(-d $SAM_OBJ)              mkdir $SAM_OBJ
+if !(-d $SAM_WRK)              mkdir $SAM_WRK
+if !(-d $SAM_WRK/OUT_2D)       mkdir $SAM_WRK/OUT_2D
+if !(-d $SAM_WRK/OUT_3D)       mkdir $SAM_WRK/OUT_3D
+if !(-d $SAM_WRK/OUT_MOMENTS)  mkdir $SAM_WRK/OUT_MOMENTS
+if !(-d $SAM_WRK/OUT_STAT)     mkdir $SAM_WRK/OUT_STAT
+if !(-d $SAM_WRK/OUT_MOVIES)   mkdir $SAM_WRK/OUT_MOVIES
+if !(-d $SAM_WRK/RESTART)      mkdir $SAM_WRK/RESTART
+if !(-d $SAM_WRK/$casename)    mkdir $SAM_WRK/$casename
+
+
+
+
+#--------------------------------------------
+#bloss: add "make clean" if MICRO or RAD options
+#        have changed.
+cat > MICRO_RAD_OPTIONS.new <<EOF
+$ADV_DIR
+$SGS_DIR
+$MICRO_DIR
+$RAD_DIR
+EOF
+
+if (-e $SAM_OBJ/MICRO_RAD_OPTIONS) then
+  # use of cmp suggested by http://docs.hp.com/en/B2355-90046/ch14s03.html
+  cmp -s $SAM_OBJ/MICRO_RAD_OPTIONS MICRO_RAD_OPTIONS.new
+  if ($status != 0) then
+    # the file has changed -- remove everything from SAM_OBJ
+    #   so that we get a fresh compile of the model
+    echo "MICRO or RAD option changed in Build.  Removing all object files from OBJ/"
+    rm -f $SAM_OBJ/*
+  endif
+endif
+# move the new options into $SAM_OBJ/MICRO_RAD_OPTIONS
+mv -f MICRO_RAD_OPTIONS.new $SAM_OBJ/MICRO_RAD_OPTIONS
+#--------------------------------------------
+
+
+cd $SAM_OBJ
+
+if ( !(-e Filepath) ) then
+cat >! Filepath << EOF
+$SAM_SRC
+$SAM_SRC/$MICRO_DIR
+$SAM_SRC/$ADV_DIR
+$SAM_SRC/$SGS_DIR
+$SAM_SRC/$RAD_DIR
+$SAM_SRC/SIMULATORS
+$SAM_SRC/SLM
+EOF
+endif
+$GNUMAKE -f $SAM_DIR/Makefile
+
+cd $SAM_DIR
+
+#setenv exec_name = SAM_$ADV_DIR_$SGS_DIR_$RAD_DIR_$MICRO_DIR
+set exec_name=SAM_ADV_MPDATA_SGS_TKE_RAD_CAM_MICRO_SAM1MOM
+#setenv exec_name = SAM_${ADV_DIR}_${SGS_DIR}_${RAD_DIR}_${MICRO_DIR}
+
+
+set SAMCASEDIR = `cat CaseName`;
+################
+#### INITIAL RUN 
+ls -l $SAMCASEDIR
+
+cp -r $SAMCASEDIR                        $SAM_WRK
+cp -r /burg/home/sga2133/SAM_simulation/SAM6.11.8/RUNDATA $SAM_WRK
+cp    CaseName                           $SAM_WRK
+cp    OutputDirName                      $SAM_WRK
+
+mv    $exec_name                         $SAM_WRK
+
+

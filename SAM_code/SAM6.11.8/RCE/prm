@@ -1,0 +1,81 @@
+&PARAMETERS
+
+caseid = 'T300_U5_SAM1MOM_B1_128x128x64'
+
+nrestart = 0,
+
+dt = 10.,
+dx = 1000.
+dy = 1000.
+
+day0=0.25,
+
+nstop    = 302400,
+nprint   = 60,
+nstat    = 180,
+nstatfrq = 60,
+
+restart_sep = .false.,
+output_sep = .false.,
+!restart_skip = 9,
+
+dofplane = .false.
+docoriolis = .false.,
+
+LES_S = .false.
+
+doseasons = .false.,
+nrad = 90,
+
+OCEAN = .true.,
+tabs_s = 300,
+
+nxco2 = 1.,
+dosgs           = .true.,
+dodamping       = .true.,
+doupperbound    = .false.,
+docloud         = .true.,
+doprecip        = .true.,
+dolongwave      = .true.,
+doshortwave     = .true.,
+dosurface       = .true.,
+dolargescale    = .false.,
+doradforcing    = .false.,
+dosfcforcing    = .false.,
+donudging_uv    = .true.,
+donudging_tq    = .false.,
+
+doperpetual = .true.,
+dosolarconstant = .true.,
+
+tauls = 3600., 
+
+SFC_FLX_FXD    = .false.,
+SFC_TAU_FXD    = .false.,
+
+doisccp = .false.,
+
+doSAMconditionals = .false.,
+dosatupdnconditionals = .false.,
+
+
+dotracers = .true., 
+
+nsave2D = 90,
+nsave2Dstart    = 259200,
+nsave2Dend      = 999999999,
+save2Dsep = .false.
+save2Davg = .true.
+
+nsave3D = 90,
+nsave3Dstart    = 259200,
+nsave3Dend      = 999999999,
+save3Dbin      = .false.
+
+nmovie       = 60,
+nmoviestart  = 99999990
+nmovieend    = 99960480
+
+/
+
+
