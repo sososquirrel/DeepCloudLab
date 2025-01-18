@@ -62,12 +62,12 @@ simulations_dict = {
         'bowen_ratio': '1',
         'microphysic': '1'
     },
-    'RCE_T300_U0_B1_M1': {
-        'velocity': '0',
-        'temperature': '300',
-        'bowen_ratio': '1',
-        'microphysic': '1'
-    },
+    #'RCE_T300_U0_B1_M1': {
+    #    'velocity': '0',
+    #    'temperature': '300',
+    #    'bowen_ratio': '1',
+    #    'microphysic': '1'
+    #},
     'RCE_T300_U20_B1_M1': {
         'velocity': '20',
         'temperature': '300',
@@ -83,10 +83,8 @@ simulations_dict = {
 }
 
 
-#for simu_name, simu_data in tqdm(simulations_dict.items()):
-simu_name = 'RCE_T300_U0_B1_M1'
-simu_data = simulations_dict[simu_name]
-print(f"Simulation {simu_name} is being downloaded...")
-paths_dict = generate_simulation_paths(**simu_data)
+for simu_name, simu_data in tqdm(simulations_dict.items()):
+    print(f"Simulation {simu_name} is being downloaded...")
+    paths_dict = generate_simulation_paths(**simu_data)
 
-download_simulation_files(paths_dict)
+    download_simulation_files(paths_dict)

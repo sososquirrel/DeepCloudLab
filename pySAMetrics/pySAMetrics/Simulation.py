@@ -70,36 +70,53 @@ class Simulation:
         self.microphysic = microphysic
 
         self.name = f'RCE_T{self.temperature}_U{self.velocity}_B{self.bowen_ratio}_M{self.microphysic}'
-        print(f'!!!!!{self.name}')
+    
 
         self.data_folder_paths = data_folder_paths
 
 
-        self.dataset_1d = xr.open_dataset(self.data_folder_paths[0], decode_cf=False, engine='netcdf4')
-        self.dataset_2d = xr.open_dataset(self.data_folder_paths[1], decode_cf=False, engine='netcdf4')
-        self.dataset_3d = xr.open_dataset(self.data_folder_paths[2], decode_cf=False, engine='netcdf4')
+        self.dataset_1d = xr.open_dataset(self.data_folder_paths[0])#, decode_cf=False, engine='scipy')
+        self.dataset_2d = xr.open_dataset(self.data_folder_paths[1])#, decode_cf=False, engine='scipy')
+        self.dataset_3d = xr.open_dataset(self.data_folder_paths[2])#, decode_cf=False, engine='scipy')
 
-        if self.bowen_ratio !='1':
+        # Convert values to floats once for proper comparison
+        bowen_ratio = float(self.bowen_ratio)
+        temperature = float(self.temperature)
+        velocity = float(self.velocity)
+
+        # Handle Bowen Ratio
+        if bowen_ratio != 1:
             cmap = pySAMetrics.cmap_simu_bowen
-            alpha = (1-float(self.bowen_ratio))/1.3
-            self.color=cmap(alpha)
-        elif self.temperature !='300':
+            alpha = (1 - bowen_ratio) / 1.3
+            alpha = max(0, min(1, alpha))  # Ensure alpha is between 0 and 1
+            self.color = cmap(alpha)
+
+        # Handle Temperature
+        elif temperature != 300:
             cmap = pySAMetrics.cmap_simu_temp
-            alpha =(6+(300-float(self.temperature)))/12
-            self.color=cmap(alpha)
-        elif self.velocity !='0':
+            alpha = (6 + (300 - temperature)) / 12
+            alpha = max(0, min(1, alpha))  # Ensure alpha is between 0 and 1
+            self.color = cmap(alpha)
+
+        # Handle Velocity
+        elif velocity != 0:
             cmap = pySAMetrics.cmap_simu_shear
-            if self.velocity=='2.5':
+            if velocity == 2.5:
                 alpha = 0.2
-            elif self.velocity=='5':
+            elif velocity == 5:
                 alpha = 0.4
-            elif self.velocity=='10':
+            elif velocity == 10:
                 alpha = 0.7
-            elif self.velocity=='20':
+            elif velocity == 20:
                 alpha = 0.9
-            self.color=cmap(alpha)
+            else:
+                alpha = 0  # Default alpha if velocity is unexpected
+            self.color = cmap(alpha)
+
+        # Default case
         else:
-            self.color='k'
+            self.color = 'k'
+
             
 
 
@@ -110,7 +127,10 @@ class Simulation:
         self.Y = self.dataset_3d.y.values
         self.Z = self.dataset_3d.z.values
 
-        self.nt, self.nz, self.nx, self.ny  = self.dataset_3d.TABS.values.shape
+        sizes_data = self.dataset_3d.sizes
+        self.nt, self.nz, self.nx, self.ny = sizes_data['time'], sizes_data['z'], sizes_data['x'], sizes_data['y']
+
+        
 
 
     def save(self, backup_folder_path):
@@ -136,12 +156,12 @@ class Simulation:
 
         simu_path = os.path.join(
             backup_folder_path,
-            f"simulation_{self.name}"
+            f"{self.name}"
         )
         # Construct the full file path
         attribute_file_path = os.path.join(
             backup_folder_path,
-            f"simulation_{self.name}", "pickle_attributes"
+            f"{self.name}", "pickle_attributes"
         )
         # Create the directory if it does not exist
         os.makedirs(os.path.dirname(attribute_file_path), exist_ok=True)
@@ -149,6 +169,7 @@ class Simulation:
         # Save the data to the file
         with open(attribute_file_path, "wb") as file:
             pickle.dump(dict2, file, 2)
+        
         
         save_or_update_dataset(new_dataset=self.dataset_computed_2d, file_path=os.path.join(simu_path, 'dataset_computed_2d'))
         save_or_update_dataset(new_dataset=self.dataset_computed_3d, file_path=os.path.join(simu_path, 'dataset_computed_3d'))
@@ -169,9 +190,9 @@ class Simulation:
                 try:
                     return xr.open_dataset(dataset_path, engine='netcdf4')
                 except Exception as e:
-                    print(f"No dataset found: {dataset_name}")
+                    print(f"A No dataset found: {dataset_name}")
             else:
-                print(f"No dataset found: {dataset_name}")
+                print(f"B No dataset found: {dataset_name}")
             return None
 
         # Construct the full file path
@@ -200,7 +221,10 @@ class Simulation:
         # Construct simulation path
         simu_path = os.path.join(backup_folder_path, self.name)
 
+        print(f'****{simu_path}')
+
         # Load datasets
+
         self.dataset_isentropic = load_dataset('dataset_isentropic')
         self.dataset_computed_3d = load_dataset('dataset_computed_3d')
         self.dataset_computed_2d = load_dataset('dataset_computed_2d')
@@ -262,11 +286,13 @@ class Simulation:
 
         RH = qv_values / QSATT
 
-        CR = get_condensation_rate(
-            vertical_velocity=self.dataset_3d.W.values,
-            density=self.dataset_1d.RHO.values,
-            humidity=qv_values,
-        )
+        ###commenting CR for the moment
+        #CR = get_condensation_rate(
+        #    vertical_velocity=self.dataset_3d.W.values,
+        #    density=self.dataset_1d.RHO.values,
+        #    humidity=qv_values,
+        #)
+        
         RHO_W = pySAMetrics.utils.expand_array_to_tzyx_array(input_array = self.dataset_1d.RHO.values[-self.nt:],
                                                      final_shape = (self.nt,self.nz,self.nx,self.ny),
                                                      time_dependence=True)*self.dataset_3d.W.values
@@ -298,12 +324,14 @@ class Simulation:
             })
         })
 
+        
         self.dataset_computed_2d = xr.Dataset({
-            'CR': (('time','y', 'x'), CR, {
+            'CR': (('time','y', 'x'), np.zeros_like(tabs_values[:,0,:,:]), {
                 'long_name': 'Condensation rate',
                 'units': 'mm'
             })
         })
+        
 
 
     def set_CR_3D(self):
@@ -525,6 +553,7 @@ class Simulation:
     
     def get_coldpool_tracking_images(self, variable_images, low_threshold, high_threshold):
         num_workers = 32  # Set number of workers based on your system
+        
 
         # Create a partial function where the other arguments (variable_images, low_threshold, high_threshold) are pre-filled
         process_func = partial(process_variable_images, variable_images=variable_images, 
@@ -534,6 +563,7 @@ class Simulation:
             print(f"Number of workers: {num_workers}")
             # Use the pre-filled partial function with the time step as the argument
             results = list(tqdm(executor.map(process_func, range(self.nt)), total=self.nt))
+            #results = list(tqdm(executor.map(process_func, range(10)), total=10)) for debug
 
         # Process results if needed
         results=np.array(results)
@@ -553,34 +583,74 @@ class Simulation:
         
         labeled_total[labeled_total!=0]=1
 
-        self.dataset_computed_2d = self.dataset_computed_2d.assign(
-                    CORE_BINARY=(('time','y', 'x'), core_sequence, {
-                        'long_name': 'Core Cold Pool location',
-                        'units': '1'
-                    })
-                )
-        
-        self.dataset_computed_2d = self.dataset_computed_2d.assign(
-                    ENVELOP_BINARY=(('time','y', 'x'), envelop_sequence, {
-                        'long_name': 'Envelop Cold Pool location',
-                        'units': '1'
-                    })
-                )
-        
-        self.dataset_computed_2d = self.dataset_computed_2d.assign(
-                    CP_BINARY=(('time','y', 'x'), labeled_total, {
-                        'long_name': 'Cold Pool location',
-                        'units': '1'
-                    })
-                )
-        
-        self.dataset_computed_2d = self.dataset_computed_2d.assign(
-                    CP_LABELS=(('time','y', 'x'), tracking_cp, {
-                        'long_name': 'Cold Pool label',
-                        'units': '1'
-                    })
-                )
-        
+        # Check if self.dataset_2d exists
+        if hasattr(self, 'dataset_computed_2d') and self.dataset_computed_2d is not None:
+            # If self.dataset_computed_2d exists, assign the new variables
+            self.dataset_computed_2d = self.dataset_computed_2d.assign(
+                CORE_BINARY=(('time', 'y', 'x'), core_sequence, {
+                    'long_name': 'Core Cold Pool location',
+                    'units': '1'
+                })
+            )
+            
+            self.dataset_computed_2d = self.dataset_computed_2d.assign(
+                ENVELOP_BINARY=(('time', 'y', 'x'), envelop_sequence, {
+                    'long_name': 'Envelop Cold Pool location',
+                    'units': '1'
+                })
+            )
+            
+            self.dataset_computed_2d = self.dataset_computed_2d.assign(
+                CP_BINARY=(('time', 'y', 'x'), labeled_total, {
+                    'long_name': 'Cold Pool location',
+                    'units': '1'
+                })
+            )
+            
+            self.dataset_computed_2d = self.dataset_computed_2d.assign(
+                CP_LABELS=(('time', 'y', 'x'), tracking_cp, {
+                    'long_name': 'Cold Pool label',
+                    'units': '1'
+                })
+            )
+        else:
+            # If self.dataset_computed_2d does not exist, create an empty dataset with coordinates
+            self.dataset_computed_2d = xr.Dataset(
+                coords={
+                    'time': range(len(core_sequence)),  # or actual time values
+                    'y': range(len(core_sequence[0])),   # or actual y values
+                    'x': range(len(core_sequence[0][0]))  # or actual x values
+                }
+            )
+            # Now assign the new variables
+            self.dataset_computed_2d = self.dataset_computed_2d.assign(
+                CORE_BINARY=(('time', 'y', 'x'), core_sequence, {
+                    'long_name': 'Core Cold Pool location',
+                    'units': '1'
+                })
+            )
+            
+            self.dataset_computed_2d = self.dataset_computed_2d.assign(
+                ENVELOP_BINARY=(('time', 'y', 'x'), envelop_sequence, {
+                    'long_name': 'Envelop Cold Pool location',
+                    'units': '1'
+                })
+            )
+            
+            self.dataset_computed_2d = self.dataset_computed_2d.assign(
+                CP_BINARY=(('time', 'y', 'x'), labeled_total, {
+                    'long_name': 'Cold Pool location',
+                    'units': '1'
+                })
+            )
+            
+            self.dataset_computed_2d = self.dataset_computed_2d.assign(
+                CP_LABELS=(('time', 'y', 'x'), tracking_cp, {
+                    'long_name': 'Cold Pool label',
+                    'units': '1'
+                })
+            )
+
     def get_isentropic_dataset(self):
         # Extract arrays once to avoid redundancy
         fmse_array = self.dataset_computed_3d.FMSE.values
@@ -591,7 +661,7 @@ class Simulation:
 
         # Create partial function with pre-filled arguments
         process_func = partial(
-            process_time_step, 
+            process_time_step_sum, 
             fmse_array=fmse_array,
             z_array=z_array, 
             rho_w_array=rho_w_array, 
@@ -601,36 +671,99 @@ class Simulation:
 
         nt = self.nt  # Number of timesteps
        
-        isent_rho_w=[]
-        isent_qn=[]
-        isent_qp=[]
+        isent_rho_w_sum=[]
+        isent_qn_sum=[]
+        isent_qp_sum=[]
         for i_t in tqdm(range(self.nt)):
             results_i=(process_func(i_t))
-            isent_rho_w.append(results_i[0])
-            isent_qn.append(results_i[1])
-            isent_qp.append(results_i[2])
+            isent_rho_w_sum.append(results_i[0])
+            isent_qn_sum.append(results_i[1])
+            isent_qp_sum.append(results_i[2])
+        
+        # Create partial function with pre-filled arguments
+        process_func = partial(
+            process_time_step_mean, 
+            fmse_array=fmse_array,
+            z_array=z_array, 
+            rho_w_array=rho_w_array, 
+            qn_array=qn_array, 
+            qp_array=qp_array
+        )
+
+        nt = self.nt  # Number of timesteps
+       
+        isent_rho_w_mean=[]
+        isent_qn_mean=[]
+        isent_qp_mean=[]
+        for i_t in tqdm(range(self.nt)):
+            results_i=(process_func(i_t))
+            isent_rho_w_mean.append(results_i[0])
+            isent_qn_mean.append(results_i[1])
+            isent_qp_mean.append(results_i[2])
+
+        # Create partial function with pre-filled arguments
+        process_func = partial(
+            process_time_step_max, 
+            fmse_array=fmse_array,
+            z_array=z_array, 
+            rho_w_array=rho_w_array, 
+            qn_array=qn_array, 
+            qp_array=qp_array
+        )
+
+        nt = self.nt  # Number of timesteps
+       
+        isent_rho_w_max=[]
+        isent_qn_max=[]
+        isent_qp_max=[]
+        for i_t in tqdm(range(self.nt)):
+            results_i=(process_func(i_t))
+            isent_rho_w_max.append(results_i[0])
+            isent_qn_max.append(results_i[1])
+            isent_qp_max.append(results_i[2])
 
         # Unpack results
         #isent_rho_w, isent_qn, isent_qp = np.zeros((3,3,3)), np.zeros((3,3,3)), np.zeros((3,3,3))
 
         # Create the final xarray Dataset
         self.dataset_isentropic = xr.Dataset({
-            'RHO_W': (('time', 'z', 'fmse'), isent_rho_w, {
+            'RHO_W_sum': (('time', 'z', 'fmse'), isent_rho_w_sum, {
                 'long_name': 'Vertical Mass Flux',
                 'units': 'kg/m2.s'
             }),
-            'QN': (('time', 'z', 'fmse'), isent_qn, {
+            'QN_sum': (('time', 'z', 'fmse'), isent_qn_sum, {
                 'long_name': 'Cloud Water',
                 'units': 'g/kg'
             }),
-            'QP': (('time', 'z', 'fmse'), isent_qp, {
+            'QP_sum': (('time', 'z', 'fmse'), isent_qp_sum, {
+                'long_name': 'Precipitating Water',
+                'units': 'g/kg'
+            }),
+            'RHO_W_mean': (('time', 'z', 'fmse'), isent_rho_w_mean, {
+                'long_name': 'Vertical Mass Flux',
+                'units': 'kg/m2.s'
+            }),
+            'QN_mean': (('time', 'z', 'fmse'), isent_qn_mean, {
+                'long_name': 'Cloud Water',
+                'units': 'g/kg'
+            }),
+            'QP_mean': (('time', 'z', 'fmse'), isent_qp_mean, {
+                'long_name': 'Precipitating Water',
+                'units': 'g/kg'
+            }),
+            'RHO_W_max': (('time', 'z', 'fmse'), isent_rho_w_max, {
+                'long_name': 'Vertical Mass Flux',
+                'units': 'kg/m2.s'
+            }),
+            'QN_max': (('time', 'z', 'fmse'), isent_qn_max, {
+                'long_name': 'Cloud Water',
+                'units': 'g/kg'
+            }),
+            'QP_max': (('time', 'z', 'fmse'), isent_qp_max, {
                 'long_name': 'Precipitating Water',
                 'units': 'g/kg'
             }),
         })
-
-
-
 
 
 
@@ -644,27 +777,86 @@ def process_variable_images(time_step, variable_images, low_threshold, high_thre
     return labeled_core_image, labeled_envelop_image, labeled_total
 
 # Move the process_time_step function outside of the method
-def process_time_step(i_t, fmse_array, z_array, rho_w_array, qn_array, qp_array):
+def process_time_step_sum(i_t, fmse_array, z_array, rho_w_array, qn_array, qp_array):
     """Processes a single time step and returns the computed values."""
     isent_rho_w_i = diagnostic_fmse_z(
         fmse_array=fmse_array,
         z_array=z_array,
         data_array=rho_w_array,
-        time_step=i_t
+        time_step=i_t,
+        bin_mode='sum'
     )
     
     isent_qn_i = diagnostic_fmse_z(
         fmse_array=fmse_array,
         z_array=z_array,
         data_array=qn_array,
-        time_step=i_t
+        time_step=i_t,
+        bin_mode='sum'
     )
     
     isent_qp_i = diagnostic_fmse_z(
         fmse_array=fmse_array,
         z_array=z_array,
         data_array=qp_array,
-        time_step=i_t
+        time_step=i_t,
+        bin_mode='sum'
+    )
+    
+    return isent_rho_w_i, isent_qn_i, isent_qp_i
+
+def process_time_step_mean(i_t, fmse_array, z_array, rho_w_array, qn_array, qp_array):
+    """Processes a single time step and returns the computed values."""
+    isent_rho_w_i = diagnostic_fmse_z(
+        fmse_array=fmse_array,
+        z_array=z_array,
+        data_array=rho_w_array,
+        time_step=i_t,
+        bin_mode='mean'
+    )
+    
+    isent_qn_i = diagnostic_fmse_z(
+        fmse_array=fmse_array,
+        z_array=z_array,
+        data_array=qn_array,
+        time_step=i_t,
+        bin_mode='mean'
+    )
+    
+    isent_qp_i = diagnostic_fmse_z(
+        fmse_array=fmse_array,
+        z_array=z_array,
+        data_array=qp_array,
+        time_step=i_t,
+        bin_mode='mean'
+    )
+    
+    return isent_rho_w_i, isent_qn_i, isent_qp_i
+
+def process_time_step_max(i_t, fmse_array, z_array, rho_w_array, qn_array, qp_array):
+    """Processes a single time step and returns the computed values."""
+    isent_rho_w_i = diagnostic_fmse_z(
+        fmse_array=fmse_array,
+        z_array=z_array,
+        data_array=rho_w_array,
+        time_step=i_t,
+        bin_mode='max'
+    )
+    
+    isent_qn_i = diagnostic_fmse_z(
+        fmse_array=fmse_array,
+        z_array=z_array,
+        data_array=qn_array,
+        time_step=i_t,
+        bin_mode='max'
+    )
+    
+    isent_qp_i = diagnostic_fmse_z(
+        fmse_array=fmse_array,
+        z_array=z_array,
+        data_array=qp_array,
+        time_step=i_t,
+        bin_mode='max'
     )
     
     return isent_rho_w_i, isent_qn_i, isent_qp_i
@@ -692,6 +884,7 @@ def save_or_update_dataset(new_dataset: xr.Dataset, file_path: str):
             
             # Merge the new variables into the existing dataset
             updated_dataset = xr.merge([existing_dataset, new_data_to_add])
+            existing_dataset.close()
             
             # Save the updated dataset
             updated_dataset.to_netcdf(file_path, mode='w')

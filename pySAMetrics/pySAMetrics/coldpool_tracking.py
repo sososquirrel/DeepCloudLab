@@ -107,7 +107,7 @@ def generate_cluster_labels(i_image, low_threshold, high_threshold):
     # Distance matrix and clustering for ensemble
     distance_matrix_ensemble = pairwise_distances(ensemble_idx, metric=periodic_distance)
     clustering_ensemble = AgglomerativeClustering(
-        n_clusters=None, distance_threshold=1.1, linkage='single', affinity='precomputed'
+        n_clusters=None, distance_threshold=1.1, linkage='single', metric='precomputed'
     ).fit(distance_matrix_ensemble)
 
     ######depends on python version................. 
@@ -136,7 +136,7 @@ def generate_cluster_labels(i_image, low_threshold, high_threshold):
             # Core clustering
             distance_matrix_core = pairwise_distances(idx_core_ensemble_reshape, metric=periodic_distance)
             clustering_core_ensemble = AgglomerativeClustering(
-                n_clusters=None, distance_threshold=1.1, linkage='single', affinity='precomputed'
+                n_clusters=None, distance_threshold=1.1, linkage='single', metric='precomputed'
             ).fit(distance_matrix_core)
 
             #clustering_core_ensemble = AgglomerativeClustering(

@@ -52,10 +52,11 @@ def get_condensation_rate(
 
     nt, nz, ny, nx = vertical_velocity.shape
 
+
     if vertical_velocity.shape[0] != density.shape[0]:
         nt = vertical_velocity.shape[0]
-        nt_long = density.shape[0]
-        density = density[nt_long - nt :, :]
+        #nt_long = density.shape[0]
+        density = density[-nt :, :]
 
     if vertical_velocity.shape[1] != density.shape[1]:
         nz = vertical_velocity.shape[1]

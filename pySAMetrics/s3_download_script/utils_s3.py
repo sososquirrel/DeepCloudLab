@@ -7,7 +7,7 @@ def generate_simulation_paths(
         bowen_ratio: str, 
         microphysic: str, 
         s3_base_path: str = 's3://sam-simulations', 
-        local_base_folder: str = '/Users/sophieabramian/Desktop/DeepCloudLab/pySAMetrics/data') -> dict:
+        local_base_folder: str = '/home/ec2-user/DeepCloudLab/data') -> dict:
     """
     Generate the paths to the 3D, 2D, and 1D datasets and additional processed datasets based on simulation parameters.
     
