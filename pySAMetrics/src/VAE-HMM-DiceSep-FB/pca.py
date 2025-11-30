@@ -20,7 +20,7 @@ from model import VAE_HMM
 DATA_PATH = "/Volumes/LaCie/000_POSTDOC_2025/long_high_res/smoothed_masked_log.npy"
 PW_PATH   = "/Volumes/LaCie/000_POSTDOC_2025/long_high_res/indexes/var_PW.npy"
 
-MODEL_PATH = '/Users/sophieabramian/Documents/DeepCloudLab/pySAMetrics/src/VAE-HMM-DiceSep-FB/runs/exp3/best_hmm_vae_checkpoint.pt'
+MODEL_PATH = '/Users/sophieabramian/Documents/DeepCloudLab/pySAMetrics/src/VAE-HMM-DiceSep-FB/runs/exp5/best_hmm_vae_checkpoint.pt'
 os.makedirs('/Users/sophieabramian/Documents/DeepCloudLab/pySAMetrics/src/VAE-HMM-DiceSep-FB/runs/exp3/figs/', exist_ok=True)
 OUT_PCA    = "/Users/sophieabramian/Documents/DeepCloudLab/pySAMetrics/src/VAE-HMM-DiceSep-FB/runs/exp2/figs/pca.png"
 OUT_PW     = "/Users/sophieabramian/Documents/DeepCloudLab/pySAMetrics/src/VAE-HMM-DiceSep-FB/runs/exp2/figs/pw_scatter.png"
@@ -59,7 +59,7 @@ print("\n=== Loading model checkpoint ===")
 
 LATENT_DIM = 8
 HIDDEN_DIM = 512
-NUM_STATES = 9
+NUM_STATES = 10
 
 model = VAE_HMM(input_dim, HIDDEN_DIM, LATENT_DIM, NUM_STATES).to(DEVICE)
 
@@ -171,6 +171,7 @@ plt.legend()
 plt.tight_layout()
 plt.show()
 
+'''
 # ============================================================
 #           NEW A — Scatter PW colored by state
 # ============================================================
@@ -303,3 +304,136 @@ plt.savefig(OUT_TM, dpi=300)
 plt.show()
 
 print(f"Transition matrix (with per-state accuracies) saved to {OUT_TM}")
+
+'''
+
+# ============================================================
+#                 SHOW 10 RANDOM IMAGES PER STATE
+# ============================================================
+
+print("\n=== Rendering 10 random samples per HMM state ===")
+
+# ------------------------------------------------------------
+# Load helper variables from your model code
+# ------------------------------------------------------------
+try:
+    from model import valid_indices, IMAGE_SIZE
+except:
+    raise ValueError("Please export valid_indices and IMAGE_SIZE from model.py.")
+
+# ------------------------------------------------------------
+# Re-define the image utilities in NumPy (as given)
+# ------------------------------------------------------------
+def inv_log_signed_np(x: np.ndarray):
+    return np.sign(x) * (np.exp(np.abs(x)) - 1)
+
+def create_image_from_flat_tensor_np(x_flat: np.ndarray):
+    """Convert flat NumPy vector back to H×W using valid_indices."""
+    if x_flat.ndim == 1:
+        x_flat = x_flat[None, :]
+    out = np.zeros((x_flat.shape[0], IMAGE_SIZE * IMAGE_SIZE))
+    out[:, valid_indices] = x_flat
+    return out.reshape(-1, IMAGE_SIZE, IMAGE_SIZE)
+
+
+# ------------------------------------------------------------
+# Create a directory to save cluster images
+# ------------------------------------------------------------
+# ============================================================
+#                 SHOW 10 RANDOM IMAGES PER STATE
+# ============================================================
+
+print("\n=== Rendering 10 random samples per HMM state ===")
+
+# ------------------------------------------------------------
+# Load helper variables from your model code
+# ------------------------------------------------------------
+try:
+    from model import valid_indices, IMAGE_SIZE
+except:
+    raise ValueError("Please export valid_indices and IMAGE_SIZE from model.py.")
+
+# ------------------------------------------------------------
+# Re-define the image utilities in NumPy (as given)
+# ------------------------------------------------------------
+def inv_log_signed_np(x: np.ndarray):
+    return np.sign(x) * (np.exp(np.abs(x)) - 1)
+
+def create_image_from_flat_tensor_np(x_flat: np.ndarray):
+    """Convert flat NumPy vector back to H×W using valid_indices."""
+    if x_flat.ndim == 1:
+        x_flat = x_flat[None, :]
+    out = np.zeros((x_flat.shape[0], IMAGE_SIZE * IMAGE_SIZE))
+    out[:, valid_indices] = x_flat
+    return out.reshape(-1, IMAGE_SIZE, IMAGE_SIZE)
+
+
+
+# ============================================================
+#            SHOW 10 RANDOM IMAGES PER STATE (contourf)
+# ============================================================
+
+print("\n=== Rendering 10 contourf images per HMM state ===")
+
+# --- Make sure spatial grid exists ---
+try:
+    XX, ZZ  # already defined earlier?
+except NameError:
+    # Fallback grid for IMAGE_SIZE x IMAGE_SIZE
+    x = np.arange(IMAGE_SIZE)
+    z = np.arange(IMAGE_SIZE)
+    XX, ZZ = np.meshgrid(x, z)
+
+# --- Fallback levels (modify as needed) ---
+try:
+    levels
+except NameError:
+    levels = np.linspace(-40, 40, 51)
+
+# --- Output directory ---
+CLUSTER_CONTOUR_DIR = os.path.join(
+    "/Users/sophieabramian/Documents/DeepCloudLab/pySAMetrics/src/VAE-HMM-DiceSep-FB/runs/exp5/figs",
+    "clusters_contour"
+)
+os.makedirs(CLUSTER_CONTOUR_DIR, exist_ok=True)
+
+N_SHOW = 10
+
+for s in range(NUM_STATES):
+    print(f"  - State {s}")
+
+    idx = np.where(states == s)[0]
+    if len(idx) == 0:
+        print("    (no samples for this state)")
+        continue
+
+    chosen = np.random.choice(idx, size=min(N_SHOW, len(idx)), replace=False)
+
+    nrows, ncols = 2, 5
+    fig = plt.figure(figsize=(13, 6))
+
+    for k, idx_global in enumerate(chosen):
+        ax = plt.subplot(nrows, ncols, k + 1)
+
+        # --- retrieve original flattened data ---
+        x_flat_np = full_tensor[idx_global].cpu().numpy()
+
+        # --- invert log-signed ---
+        x_inv = inv_log_signed_np(x_flat_np)
+
+        # --- reshape to image ---
+        img = create_image_from_flat_tensor_np(x_inv)[0]
+
+        # --- contourf plot ---
+        ax.contourf(XX, ZZ, img, cmap='RdBu_r', levels=levels)
+        ax.set_title(f"State {s}\nidx={idx_global}", fontsize=8)
+        ax.axis("off")
+
+    plt.suptitle(f"State {s} — {len(idx)} samples", fontsize=14)
+    plt.tight_layout()
+
+    out_path = os.path.join(CLUSTER_CONTOUR_DIR, f"state_{s}_contours.png")
+    plt.savefig(out_path, dpi=200)
+    plt.show()
+
+    print(f"    saved → {out_path}")

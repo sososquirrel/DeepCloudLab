@@ -9,7 +9,7 @@ from torch.utils.data import Dataset, DataLoader
 import torch.optim as optim
 from torch.nn.utils import clip_grad_norm_
 from model import VAE_HMM, compute_hmm_vae_loss
-from model import dice_distance_loss_random_pairs_from_true_x, ssim_contrastive_loss_random_pairs_from_true_x, vectorized_macro_dice_from_masks
+from model import dice_distance_loss_random_pairs_from_true_x, vectorized_macro_dice_from_masks
 from model import inv_log_signed, create_image_from_flat_tensor_torch, make_three_masks_torch
 
 
@@ -37,34 +37,31 @@ def straight_through_one_hot_from_probs(probs):
 DATA_FOLDER_PATH = '/Volumes/LaCie/000_POSTDOC_2025/long_high_res'
 valid_indices = np.load(os.path.join(DATA_FOLDER_PATH, "valid_indices.npy"))
 valid_indices_torch = torch.from_numpy(valid_indices).long()
-IMAGE_SIZE = 48
-DATA_RANGE = 20.0
 
+IMAGE_SIZE = 48
+DATA_RANGE = 10.0
 
 # ============================================================
-# Hyperparameters (same as your last snippet, plus SSIM lambda)
+# Hyperparameters (same as your last snippet
 LATENT_DIM = 8
 HIDDEN_DIM = 512
-NUM_STATES = 9
-BETA_KL = 0.001
-GAMMA_HMM = 3
+NUM_STATES = 10
+BETA_KL = 0.008
+GAMMA_HMM = 0.3
 GAMMA_ENTROPY = 0
+NUM_PAIRS_TRIPLET = 256
 
-LAMBDA_DICE = 300.0   # keep if you want dice reg
-LAMBDA_SSIM = 0    # new: SSIM contrastive reg weight (set to 0 to disable)
-LR = 1e-4
+LAMBDA_DICE = 200.0   # keep if you want dice reg
+LR = 5e-5
 BATCH_SIZE = 256
 NUM_EPOCHS = 256
 CLIP_GRAD = 1.0
 
 DICE_THR_COH = 0.25
-DICE_THR_SEP = 0.45
+DICE_THR_SEP = 0.35
 
 
-SSIM_THR_COH = 0.85  # SSIM high -> cohesion
-SSIM_THR_SEP = 0.55  # SSIM low -> separation
-
-OUT_DIR = '/Users/sophieabramian/Documents/DeepCloudLab/pySAMetrics/src/VAE-HMM-DiceSep-FB/runs/exp3'
+OUT_DIR = '/Users/sophieabramian/Documents/DeepCloudLab/pySAMetrics/src/VAE-HMM-DiceSep-FB/runs/exp5'
 os.makedirs(OUT_DIR, exist_ok=True)
 
 SEED = 42
@@ -82,8 +79,8 @@ input_dim = data.shape[1]
 
 indices = np.arange(len(data))
 np.random.shuffle(indices)
-train_idx = indices[:int(0.95 * len(indices))]
-val_idx   = indices[int(0.95 * len(indices)):int(0.99 * len(indices))]
+train_idx = indices[:int(0.90 * len(indices))]
+val_idx   = indices[int(0.90 * len(indices)):int(0.999 * len(indices))]
 
 class NextStepDataset(Dataset):
     def __init__(self, data, idxs):
@@ -127,32 +124,28 @@ class EpochAccumulator:
 loss_tracker = {"train": [], "val": []}
 
 def display_epoch_metrics(split, epoch_metrics):
-    keys = ["total", "recon", "kl_scaled", "hmm_scaled", "dice_loss_scaled", "ssim_loss_scaled", "entropy_unscaled"]
+    keys = ["total", "recon", "kl_scaled", "hmm_scaled", "dice_loss_scaled", "entropy_unscaled"]
     msg = f"[{split}] "
     for k in keys:
         if k in epoch_metrics:
             msg += f"{k}:{epoch_metrics[k]:.4f} | "
     if "trans_acc" in epoch_metrics:
         msg += f"TRANS_ACC:{epoch_metrics['trans_acc']:.4f} | "
-    if "triplet_ratio" in epoch_metrics:
-        msg += f"TRIPLET:{epoch_metrics['triplet_ratio']:.4f} | "
-    if "state_counts" in epoch_metrics:
-        counts = [int(c) for c in epoch_metrics['state_counts']]
-        msg += f"COUNTS:[{','.join(map(str, counts))}]"
+    '''if "triplet_ratio" in epoch_metrics:
+        msg += f"TRIPLET:{epoch_metrics['triplet_ratio']:.4f} | "'''
     print(msg)
 
 # ============================================================
-# Training Loop (main) - speed-optimized and with correct dice/ssim on TRUE x
+# Training Loop (main) - speed-optimized and with correct dice on TRUE x
 best_val = float('inf')
-best_train = float('inf')
 best_ckpt_path = os.path.join(OUT_DIR, "best_hmm_vae_checkpoint.pt")
-best_ckpt_train_path = os.path.join(OUT_DIR, "best_hmm_vae_checkpoint_train.pt")
 
+# ============================================================
+# Training Loop (CORRECTED)
+# ============================================================
 for epoch in range(NUM_EPOCHS):
     model.train()
     train_acc = EpochAccumulator()
-
-    # We'll accumulate metrics over *all* batches (sums and counts) to avoid bias from last batch
     total_samples_train = 0
 
     for x_t, x_tp1 in train_loader:
@@ -173,57 +166,37 @@ for epoch in range(NUM_EPOCHS):
             lambda_entropy=GAMMA_ENTROPY
         )
 
-        # NEW: compute dice-based penalty using TRUE x_t (not reconstructions)
         dice_pen = dice_distance_loss_random_pairs_from_true_x(
-            x_flat=out_t["input_x"],  # use true input
+            x_flat=out_t["input_x"],
             s_probs=out_t["s_probs"],
-            num_pairs=128,
+            num_pairs=NUM_PAIRS_TRIPLET,
             thr_coh=DICE_THR_COH,
             thr_sep=DICE_THR_SEP,
             device=DEVICE
         )
 
-        # NEW: compute SSIM-based penalty using TRUE x_t (not reconstructions)
-        ssim_pen = ssim_contrastive_loss_random_pairs_from_true_x(
-            x_flat=out_t["input_x"],
-            s_probs=out_t["s_probs"],
-            num_pairs=128,
-            thr_coh=SSIM_THR_COH,
-            thr_sep=SSIM_THR_SEP,
-            device=DEVICE,
-            data_range=DATA_RANGE
-        )
-
-        # scale and add
         loss_dict["dice_loss_unscaled"] = dice_pen.detach()
         loss_dict["dice_loss_scaled"] = LAMBDA_DICE * dice_pen
+        loss_dict["total"] = loss_dict["total"] + loss_dict["dice_loss_scaled"]
 
-        loss_dict["ssim_loss_unscaled"] = ssim_pen.detach()
-        loss_dict["ssim_loss_scaled"] = LAMBDA_SSIM * ssim_pen
-
-        # add to total
-        loss_dict["total"] = loss_dict["total"] + loss_dict["dice_loss_scaled"] + loss_dict["ssim_loss_scaled"]
-
-        # compute metrics (vectorized, on-batch)
         with torch.no_grad():
-            # transition accuracy
+            # 1. Transition Accuracy
             s_t = out_t["s_argmax"]
+            # Predict next state based on transition matrix
             s_tp1_pred = out_t["trans_mat"][s_t.long()].argmax(dim=1)
             trans_accuracy = (s_tp1_pred == out_tp1["s_argmax"]).float().mean()
 
-            # triplet ratio: approximate using same pair-sampling scheme but on true x
-            # Reuse the vectorized functions above to compute an approx triplet ratio
+            # 2. Triplet Ratio
             B = batch_size
             if B < 2:
                 triplet_ratio = torch.tensor(0.0, device=DEVICE)
             else:
-                # We'll reuse the index sampling done inside the dice function for fairness:
-                num_pairs = 128
-                idx_i = torch.randint(0, B, (num_pairs,), device=DEVICE)
-                idx_j = torch.randint(0, B, (num_pairs,), device=DEVICE)
 
-                imgs = create_image_from_flat_tensor_torch(inv_log_signed(out_t["input_x"])).to(DEVICE)  # B x 1 x H x W
-                masks = make_three_masks_torch(imgs)  # B x H x W
+                idx_i = torch.randint(0, B, (NUM_PAIRS_TRIPLET,), device=DEVICE)
+                idx_j = torch.randint(0, B, (NUM_PAIRS_TRIPLET,), device=DEVICE)
+
+                imgs = create_image_from_flat_tensor_torch(inv_log_signed(out_t["input_x"])).to(DEVICE)
+                masks = make_three_masks_torch(imgs)
 
                 masks_i = masks[idx_i]
                 masks_j = masks[idx_j]
@@ -238,43 +211,45 @@ for epoch in range(NUM_EPOCHS):
                 respects = torch.where(~applies, torch.ones_like(applies, dtype=torch.bool), (respect_A | respect_B))
                 triplet_ratio = respects.float().mean()
 
-            # state counts across the batch (for logging)
+            # 3. State Counts
             num_states = out_t["trans_mat"].shape[0]
             all_states = torch.cat([out_t["s_argmax"], out_tp1["s_argmax"]]).long()
             state_counts = torch.bincount(all_states, minlength=num_states)
 
-            # log scalars into accumulator (weighted by batch size)
+            # --- LOGGING CORRECTED ---
+            # Use add_scalar for metrics you want averaged
             train_acc.add_scalar("total", loss_dict["total"].detach().item(), n=batch_size)
             train_acc.add_scalar("recon", loss_dict["recon"].detach().item(), n=batch_size)
             train_acc.add_scalar("kl_scaled", loss_dict["kl_scaled"].detach().item(), n=batch_size)
             train_acc.add_scalar("hmm_scaled", loss_dict["hmm_scaled"].detach().item(), n=batch_size)
             train_acc.add_scalar("dice_loss_scaled", (LAMBDA_DICE * dice_pen).detach().item(), n=batch_size)
-            train_acc.add_scalar("ssim_loss_scaled", (LAMBDA_SSIM * ssim_pen).detach().item(), n=batch_size)
             train_acc.add_scalar("entropy_unscaled", loss_dict["entropy_unscaled"].detach().item(), n=batch_size)
-            # store some non-scalar last-seen items in other (we'll average state counts separately)
-            train_acc.set_other("trans_acc_running", trans_accuracy.item())
-            train_acc.set_other("triplet_ratio_running", triplet_ratio.item())
-            train_acc.set_other("state_counts_running", state_counts.cpu().numpy())
+            
+            # FIXED: Use add_scalar here with simple names
+            train_acc.add_scalar("trans_acc", trans_accuracy.item(), n=batch_size)
+            train_acc.add_scalar("triplet_ratio", triplet_ratio.item(), n=batch_size)
+            
+            # Keep set_other for state counts (since it's an array, not a scalar)
+            train_acc.set_other("state_counts", state_counts.cpu().numpy())
 
-        # Backprop
         loss_dict["total"].backward()
         clip_grad_norm_(model.parameters(), CLIP_GRAD)
         optimizer.step()
 
-    # End of epoch train summary: finalize averages from accumulator
-    epoch_train_metrics = train_acc.get_epoch_metrics()
-    # attach running trans_acc/triplet_ratio/state_counts last seen
-    # For better logging, let's compute one pass over a small random mini-batch for accurate trans_acc/triplet_ratio if needed.
-    # But to stay deterministic and avoid extra passes, we'll use the running entries we stored (last batch proxies)
-    epoch_train_metrics["trans_acc"] = train_acc.other.get("trans_acc_running", 0.0)
-    epoch_train_metrics["triplet_ratio"] = train_acc.other.get("triplet_ratio_running", 0.0)
-    epoch_train_metrics["state_counts"] = train_acc.other.get("state_counts_running", np.zeros(NUM_STATES, dtype=np.int64)).tolist()
+    # --- END OF TRAIN EPOCH CORRECTED ---
+    # get_epoch_metrics auto-averages everything added via add_scalar
+    epoch_train_metrics = train_acc.get_epoch_metrics() 
+    
+    # We only need to manually attach state_counts (because it's in 'other')
+    # Note: trans_acc and triplet_ratio are ALREADY in epoch_train_metrics now!
+    epoch_train_metrics["state_counts"] = train_acc.other.get("state_counts", np.zeros(NUM_STATES, dtype=np.int64)).tolist()
 
     loss_tracker["train"].append(epoch_train_metrics)
     display_epoch_metrics("train", epoch_train_metrics)
 
-    # -------------------------------------------------------
-    # Validation (vectorized, aggregated similarly)
+    # ============================================================
+    # Validation Loop (CORRECTED)
+    # ============================================================
     model.eval()
     val_acc = EpochAccumulator()
     total_samples_val = 0
@@ -297,95 +272,71 @@ for epoch in range(NUM_EPOCHS):
             dice_pen = dice_distance_loss_random_pairs_from_true_x(
                 x_flat=out_t["input_x"],
                 s_probs=out_t["s_probs"],
-                num_pairs=128,
+                num_pairs=NUM_PAIRS_TRIPLET,
                 thr_coh=DICE_THR_COH,
                 thr_sep=DICE_THR_SEP,
                 device=DEVICE
             )
 
-            ssim_pen = ssim_contrastive_loss_random_pairs_from_true_x(
-                x_flat=out_t["input_x"],
-                s_probs=out_t["s_probs"],
-                num_pairs=128,
-                thr_coh=SSIM_THR_COH,
-                thr_sep=SSIM_THR_SEP,
-                device=DEVICE,
-                data_range=DATA_RANGE
-            )
-
             loss_dict["dice_loss_unscaled"] = dice_pen
             loss_dict["dice_loss_scaled"]   = LAMBDA_DICE * dice_pen
-            loss_dict["ssim_loss_unscaled"] = ssim_pen
-            loss_dict["ssim_loss_scaled"]   = LAMBDA_SSIM * ssim_pen
-            loss_dict["total"] = loss_dict["total"] + loss_dict["dice_loss_scaled"] + loss_dict["ssim_loss_scaled"]
+            loss_dict["total"] = loss_dict["total"] + loss_dict["dice_loss_scaled"]
 
             # metrics
             s_t = out_t["s_argmax"]
             s_tp1_pred = out_t["trans_mat"][s_t.long()].argmax(dim=1)
             trans_accuracy = (s_tp1_pred == out_tp1["s_argmax"]).float().mean()
 
-            # triplet ratio (vectorized approximate, same approach as train)
+            # triplet ratio
             B = batch_size
             if B < 2:
                 triplet_ratio = torch.tensor(0.0, device=DEVICE)
             else:
-                num_pairs = 128
-                idx_i = torch.randint(0, B, (num_pairs,), device=DEVICE)
-                idx_j = torch.randint(0, B, (num_pairs,), device=DEVICE)
-
+                idx_i = torch.randint(0, B, (NUM_PAIRS_TRIPLET,), device=DEVICE)
+                idx_j = torch.randint(0, B, (NUM_PAIRS_TRIPLET,), device=DEVICE)
                 imgs = create_image_from_flat_tensor_torch(inv_log_signed(out_t["input_x"])).to(DEVICE)
                 masks = make_three_masks_torch(imgs)
-
                 masks_i = masks[idx_i]
                 masks_j = masks[idx_j]
                 dice_vals = vectorized_macro_dice_from_masks(masks_i, masks_j)
                 dice_distances = 1.0 - dice_vals
-
                 same_state_mask = (out_t["s_argmax"][idx_i] == out_t["s_argmax"][idx_j])
-
                 respect_A = (dice_distances > DICE_THR_SEP) & (~same_state_mask)
                 respect_B = (dice_distances < DICE_THR_COH) & (same_state_mask)
                 applies = (dice_distances > DICE_THR_SEP) | (dice_distances < DICE_THR_COH)
                 respects = torch.where(~applies, torch.ones_like(applies, dtype=torch.bool), (respect_A | respect_B))
                 triplet_ratio = respects.float().mean()
 
-            # state counts
             num_states = out_t["trans_mat"].shape[0]
             all_states = torch.cat([out_t["s_argmax"], out_tp1["s_argmax"]]).long()
             state_counts = torch.bincount(all_states, minlength=num_states)
 
-            # accumulate scalars
+            # --- LOGGING CORRECTED (VAL) ---
             val_acc.add_scalar("total", loss_dict["total"].detach().item(), n=batch_size)
             val_acc.add_scalar("recon", loss_dict["recon"].detach().item(), n=batch_size)
             val_acc.add_scalar("kl_scaled", loss_dict["kl_scaled"].detach().item(), n=batch_size)
             val_acc.add_scalar("hmm_scaled", loss_dict["hmm_scaled"].detach().item(), n=batch_size)
             val_acc.add_scalar("dice_loss_scaled", (LAMBDA_DICE * dice_pen).detach().item(), n=batch_size)
-            val_acc.add_scalar("ssim_loss_scaled", (LAMBDA_SSIM * ssim_pen).detach().item(), n=batch_size)
             val_acc.add_scalar("entropy_unscaled", loss_dict["entropy_unscaled"].detach().item(), n=batch_size)
-            val_acc.set_other("trans_acc_running", trans_accuracy.item())
-            val_acc.set_other("triplet_ratio_running", triplet_ratio.item())
-            val_acc.set_other("state_counts_running", state_counts.cpu().numpy())
+            
+            # FIXED: Use add_scalar so we get the epoch average, not just the last batch
+            val_acc.add_scalar("trans_acc", trans_accuracy.item(), n=batch_size)
+            val_acc.add_scalar("triplet_ratio", triplet_ratio.item(), n=batch_size)
+            val_acc.set_other("state_counts", state_counts.cpu().numpy())
 
     epoch_val_metrics = val_acc.get_epoch_metrics()
-    epoch_val_metrics["trans_acc"] = val_acc.other.get("trans_acc_running", 0.0)
-    epoch_val_metrics["triplet_ratio"] = val_acc.other.get("triplet_ratio_running", 0.0)
-    epoch_val_metrics["state_counts"] = val_acc.other.get("state_counts_running", np.zeros(NUM_STATES, dtype=np.int64)).tolist()
+    # Again, trans_acc and triplet_ratio are already in epoch_val_metrics via add_scalar
+    epoch_val_metrics["state_counts"] = val_acc.other.get("state_counts", np.zeros(NUM_STATES, dtype=np.int64)).tolist()
 
     loss_tracker["val"].append(epoch_val_metrics)
     display_epoch_metrics("val", epoch_val_metrics)
 
+    # (Checkpoints logic remains same...)
     last_val_total = epoch_val_metrics.get("total", float('inf'))
     if last_val_total < best_val:
         best_val = last_val_total
         torch.save({"state_dict": model.state_dict()}, best_ckpt_path)
         print(f"Saved best (val={best_val:.6f})")
 
-    last_train_total = epoch_train_metrics.get("total", float('inf'))
-    if last_train_total < best_train:
-        best_train = last_train_total
-        torch.save({"state_dict": model.state_dict()}, best_ckpt_train_path)
-        print(f"Saved best train (train={best_train:.6f})")
-
-    # optional: small epoch summary print already done above
 
 print("Training done.")

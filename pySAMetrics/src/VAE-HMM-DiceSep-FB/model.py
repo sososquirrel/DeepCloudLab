@@ -26,7 +26,7 @@ DATA_FOLDER_PATH = '/Volumes/LaCie/000_POSTDOC_2025/long_high_res'
 valid_indices = np.load(os.path.join(DATA_FOLDER_PATH, "valid_indices.npy"))
 valid_indices_torch = torch.from_numpy(valid_indices).long()
 IMAGE_SIZE = 48
-DATA_RANGE = 20.0
+DATA_RANGE = 10.0
 
 def inv_log_signed(x):
     """Applies the inverse log-signed transformation (works with torch tensors)."""
@@ -62,21 +62,35 @@ def make_three_masks_torch(imgs: torch.Tensor):
 def vectorized_macro_dice_from_masks(maskA: torch.Tensor, maskB: torch.Tensor, eps=1e-8):
     """
     maskA, maskB: B x H x W integer masks with classes {0,1,2}
-    returns dice_per_example: B tensor representing mean dice over classes (macro dice)
-    Vectorized, runs on GPU.
+    returns dice_per_example: B tensor representing mean dice over classes.
     """
     B = maskA.shape[0]
     dices = []
+    
+    # Pre-view to avoid doing it inside the loop
+    maskA_flat = maskA.view(B, -1)
+    maskB_flat = maskB.view(B, -1)
+    
     for c in (0, 1, 2):
-        A = (maskA == c).view(B, -1).float()
-        Bm = (maskB == c).view(B, -1).float()
+        # Create binary masks for class c
+        A = (maskA_flat == c).float()
+        Bm = (maskB_flat == c).float()
+        
         inter = (A * Bm).sum(dim=1)
         A_sum = A.sum(dim=1)
         B_sum = Bm.sum(dim=1)
         denom = A_sum + B_sum
-        # if denom == 0 -> dice = 1.0
-        dice_c = torch.where(denom > 0, (2.0 * inter) / (denom + eps), torch.ones_like(denom))
+        
+        # FIX: Robust check for empty unions
+        # If denom < eps, both masks are empty for this class -> Dice = 1.0
+        # Otherwise -> 2*inter / denom
+        dice_c = torch.where(
+            denom > eps, 
+            (2.0 * inter) / (denom + eps), 
+            torch.ones_like(denom)
+        )
         dices.append(dice_c)
+        
     dices = torch.stack(dices, dim=1)  # B x 3
     return dices.mean(dim=1)  # B
 
@@ -156,56 +170,13 @@ def dice_distance_loss_random_pairs_from_true_x(
     p_sames = (s_probs[idx_i] * s_probs[idx_j]).sum(dim=1)  # num_pairs
     p_diff = 1.0 - p_sames
 
-    # Penalty terms (contrastive)
-    term_cohesion_penalty = p_diff * torch.relu(thr_coh - dice_distances)
-    term_separation_penalty = p_sames * torch.relu(dice_distances - thr_sep)
+    term_cohesion_penalty =  p_diff * torch.relu(thr_coh - dice_distances)
+    term_separation_penalty =  p_sames * torch.relu(dice_distances - thr_sep)
 
     penalty = (term_cohesion_penalty + term_separation_penalty).mean()
     return penalty
 
-def ssim_contrastive_loss_random_pairs_from_true_x(
-    x_flat: torch.Tensor,
-    s_probs: torch.Tensor,
-    num_pairs: int = 128,
-    thr_coh: float = 0.15,   # SSIM thresholds are smaller (SSIM in [0,1])
-    thr_sep: float = 0.6,
-    device: torch.device = torch.device("cpu"),
-    data_range: float = DATA_RANGE
-) -> torch.Tensor:
-    """
-    SSIM-based contrastive regularizer computed on TRUE input x (not recon).
-    Uses global SSIM on full image (vectorized).
-    thr_coh, thr_sep behave like: if ssim > thr_coh -> same state; if ssim < thr_sep -> different
-    We use ssim_distance = 1 - ssim for a similar 'distance' notion.
-    """
-    B = x_flat.shape[0]
-    if B < 2:
-        return torch.tensor(0.0, dtype=torch.float32, device=device)
 
-    imgs = create_image_from_flat_tensor_torch(inv_log_signed(x_flat)).to(device)  # B x 1 x H x W
-
-    idx_i = torch.randint(0, B, (num_pairs,), device=device)
-    idx_j = torch.randint(0, B, (num_pairs,), device=device)
-
-    imgs_i = imgs[idx_i]  # num_pairs x 1 x H x W
-    imgs_j = imgs[idx_j]
-
-    ssim_vals = global_ssim_batch(imgs_i, imgs_j, data_range=data_range)  # num_pairs
-    ssim_distances = 1.0 - ssim_vals  # num_pairs, in [0,2] but typically [0,1]
-
-    p_sames = (s_probs[idx_i] * s_probs[idx_j]).sum(dim=1)
-    p_diff = 1.0 - p_sames
-
-    # Convert thr_coh/sep from SSIM space (we used ssim directly) -> use ssim distances thresholding analogue
-    # cohesion condition (ssim close to 1 -> distance small): distance < (1 - thr_coh)
-    thr_coh_dist = 1.0 - thr_coh
-    thr_sep_dist = 1.0 - thr_sep
-
-    term_cohesion_penalty = p_diff * torch.relu(thr_coh_dist - ssim_distances)
-    term_separation_penalty = p_sames * torch.relu(ssim_distances - thr_sep_dist)
-
-    penalty = (term_cohesion_penalty + term_separation_penalty).mean()
-    return penalty
 
 # ============================================================
 # VAE-HMM model & loss (copied and slightly tidied from your snippet)
@@ -230,9 +201,9 @@ class VAE_HMM(nn.Module):
 
         # State predictor (from z)
         self.state_predictor = nn.Sequential(
-            nn.Linear(latent_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, num_states)
+            nn.Linear(latent_dim, num_states),
+            #nn.ReLU(),
+            #nn.Linear(hidden_dim, num_states)
         )
 
         # Decoder (symmetrical)
@@ -246,12 +217,12 @@ class VAE_HMM(nn.Module):
             nn.Linear(hidden_dim, input_dim)
         )
 
-        self.trans_logits = nn.Parameter(torch.randn(num_states, num_states))
+        self.trans_logits = nn.Parameter(torch.randn(num_states, num_states) * 0.1)
 
     def forward(self, x):
         h = self.encoder(x)
         mu = self.mu_layer(h)
-        logvar = self.logvar_layer(h).clamp(-10, 10)
+        logvar = self.logvar_layer(h).clamp(-5, 5)
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         z = mu + std * eps
